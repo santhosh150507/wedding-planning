@@ -1,0 +1,53 @@
+version: '3.8'
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: royal_knot_postgres
+    restart: always
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-royalknot}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-royalknot_secret_2026}
+      POSTGRES_DB: ${POSTGRES_DB:-royal_knot}
+    ports:
+      - "5432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U royalknot -d royal_knot"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: royal_knot_backend
+    restart: always
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      DATABASE_URL: postgresql://royalknot:royalknot_secret_2026@postgres:5432/royal_knot
+      SECRET_KEY: ${SECRET_KEY:-royal_knot_super_secret_jwt_key_2026_luxury_weddings}
+      ENVIRONMENT: production
+    ports:
+      - "8000:8000"
+    volumes:
+      - ./backend/uploads:/app/uploads
+
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    container_name: royal_knot_frontend
+    restart: always
+    depends_on:
+      - backend
+    ports:
+      - "5173:80"
+
+volumes:
+  pgdata:
+

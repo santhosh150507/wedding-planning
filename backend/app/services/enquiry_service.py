@@ -11,19 +11,28 @@ def generate_enquiry_number(db: Session) -> str:
     current_year = datetime.utcnow().year
     prefix = f"RK-ENQ-{current_year}-"
     
-    # Find latest enquiry number for current year
-    latest = db.query(Enquiry).filter(Enquiry.enquiry_number.like(f"{prefix}%")).order_by(desc(Enquiry.enquiry_number)).first()
-    
-    if latest and latest.enquiry_number:
-        try:
-            last_seq = int(latest.enquiry_number.split("-")[-1])
-            new_seq = last_seq + 1
-        except (ValueError, IndexError):
-            new_seq = 1
-    else:
-        new_seq = 1
+    # Query all enquiry numbers for this year to find true numerical max
+    enquiries = db.query(Enquiry.enquiry_number).filter(Enquiry.enquiry_number.like(f"{prefix}%")).all()
+    max_seq = 0
+    for (num,) in enquiries:
+        if num and num.startswith(prefix):
+            try:
+                seq_part = num[len(prefix):]
+                digits = "".join(ch for ch in seq_part if ch.isdigit())
+                if digits:
+                    val = int(digits)
+                    if val > max_seq:
+                        max_seq = val
+            except Exception:
+                pass
+                
+    new_seq = max_seq + 1
+    candidate = f"{prefix}{new_seq:04d}"
+    while db.query(Enquiry).filter(Enquiry.enquiry_number == candidate).first():
+        new_seq += 1
+        candidate = f"{prefix}{new_seq:04d}"
         
-    return f"{prefix}{new_seq:04d}"
+    return candidate
 
 class EnquiryService:
     @staticmethod

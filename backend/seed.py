@@ -1,19 +1,38 @@
 from datetime import datetime, timedelta
+import uuid
 from app.core.database import SessionLocal, Base, engine
 from app.core.security import get_password_hash
 from app.models.user import Role, User
 from app.models.enquiry import Enquiry, EnquiryNote, Consultation
+from app.models.proposal_contract import Proposal, Contract, SigningToken
 from app.models.wedding import Wedding, WeddingEvent
-from app.models.vendor import VendorCategory, Vendor
-from app.models.finance import ClientPayment, ClientPaymentMilestone, VendorInvoice, VendorPayment, Expense, TimeEntry
+from app.models.vendor import (
+    VendorCategory,
+    Vendor,
+    QuotationRequest,
+    VendorQuotation,
+    QuotationLineItem,
+    WeddingVendor
+)
+from app.models.finance import (
+    ClientPayment,
+    ClientPaymentMilestone,
+    VendorInvoice,
+    VendorPayment,
+    Expense,
+    ExtraCharge,
+    TimeEntry
+)
 from app.models.task import TaskTemplate, Task
+from app.models.guest import Guest
 from app.models.activity import ActivityLog
+from app.services.task_engine_service import TaskEngineService
 
 def seed_database():
     Base.metadata.create_all(bind=engine)
     db = SessionLocal()
 
-    print("Seeding The Royal Knot database...")
+    print("Seeding full database for The Royal Knot...")
 
     # 1. Seed Roles
     roles_data = [
@@ -37,41 +56,11 @@ def seed_database():
     # 2. Seed Users
     default_password = get_password_hash("Royal@123")
     users_data = [
-        {
-            "email": "founder@royalknot.in",
-            "full_name": "Maharaja Digvijay Singh",
-            "phone": "+91 98290 11001",
-            "role": "Founder / Super Admin",
-            "hourly_cost_rate": 5000.00
-        },
-        {
-            "email": "admin@royalknot.in",
-            "full_name": "Rani Devika Shekhawat",
-            "phone": "+91 98290 11002",
-            "role": "Administrator",
-            "hourly_cost_rate": 3000.00
-        },
-        {
-            "email": "planner@royalknot.in",
-            "full_name": "Gayatri Rathore",
-            "phone": "+91 98290 11003",
-            "role": "Wedding Planner",
-            "hourly_cost_rate": 2000.00
-        },
-        {
-            "email": "staff@royalknot.in",
-            "full_name": "Vikram Singh Bhati",
-            "phone": "+91 98290 11004",
-            "role": "Planning Staff",
-            "hourly_cost_rate": 1000.00
-        },
-        {
-            "email": "finance@royalknot.in",
-            "full_name": "Siddharth Mehta",
-            "phone": "+91 98290 11005",
-            "role": "Finance Manager",
-            "hourly_cost_rate": 2500.00
-        }
+        {"email": "founder@royalknot.in", "full_name": "Maharaja Digvijay Singh", "phone": "+91 98290 11001", "role": "Founder / Super Admin", "hourly_cost_rate": 5000.00},
+        {"email": "admin@royalknot.in", "full_name": "Rani Devika Shekhawat", "phone": "+91 98290 11002", "role": "Administrator", "hourly_cost_rate": 3000.00},
+        {"email": "planner@royalknot.in", "full_name": "Gayatri Rathore", "phone": "+91 98290 11003", "role": "Wedding Planner", "hourly_cost_rate": 2000.00},
+        {"email": "staff@royalknot.in", "full_name": "Vikram Singh Bhati", "phone": "+91 98290 11004", "role": "Planning Staff", "hourly_cost_rate": 1000.00},
+        {"email": "finance@royalknot.in", "full_name": "Siddharth Mehta", "phone": "+91 98290 11005", "role": "Finance Manager", "hourly_cost_rate": 2500.00}
     ]
 
     users_map = {}
@@ -93,333 +82,375 @@ def seed_database():
         users_map[u["email"]] = user
 
     planner_id = users_map["planner@royalknot.in"].id
-    admin_id = users_map["admin@royalknot.in"].id
+    finance_id = users_map["finance@royalknot.in"].id
+    staff_id = users_map["staff@royalknot.in"].id
 
-    # 3. Seed Vendor Categories
-    categories = [
-        ("Catering & Royal Banquet", "catering"),
-        ("Palace Decor & Set Design", "decor"),
-        ("Photography & Cinematography", "photography"),
-        ("Celebrity DJs & Sound Design", "music"),
-        ("Bridal Makeup & Styling", "makeup"),
-        ("Live Entertainment & Folk Arts", "entertainment"),
-        ("Heritage Transportation & Vintage Cars", "transport"),
-        ("Heritage Venue Management", "venue"),
-        ("Architectural Lighting & Fireworks", "lighting")
+    # 3. Seed 12 Vendor Categories
+    categories_data = [
+        ("Catering", "catering", "Royal Rajasthani banquet and global gourmet Khansamas"),
+        ("Decoration", "decor", "Palace scenography, mandaps, brass candelabras, shamianas"),
+        ("Photography", "photography", "Candid documentary and museum-grade wedding albums"),
+        ("Videography", "videography", "Cinematic 4K drone reels and feature films"),
+        ("Makeup Artists", "makeup", "Bridal styling, royal hair and traditional draping"),
+        ("DJs and Music", "djs_music", "Celebrity DJs, acoustic percussionists, sound architecture"),
+        ("Entertainment", "entertainment", "Manganiyar royal folk artists, Sufi ensembles, royal dancers"),
+        ("Florists", "florists", "Dutch roses, native tuberoses, and grand floral installations"),
+        ("Transportation", "transport", "Vintage Rolls Royces, lake shikaras, airport convoys"),
+        ("Venue", "venue", "Palace estates, fort courtyards, and island palaces"),
+        ("Lighting", "lighting", "Architectural palace illumination, chandeliers, cold pyros"),
+        ("Other Services", "other", "Safa/turban tying maestros, mehendi artists, astrologers")
     ]
-    for cat_name, cat_code in categories:
-        if not db.query(VendorCategory).filter(VendorCategory.code == cat_code).first():
-            db.add(VendorCategory(name=cat_name, code=cat_code))
-    db.commit()
+    categories_map = {}
+    for cat_name, cat_code, cat_desc in categories_data:
+        cat = db.query(VendorCategory).filter(VendorCategory.code == cat_code).first()
+        if not cat:
+            cat = VendorCategory(name=cat_name, code=cat_code, description=cat_desc)
+            db.add(cat)
+            db.commit()
+            db.refresh(cat)
+        categories_map[cat_code] = cat
 
-    # 4. Seed Enquiries
+    # 4. Seed 25+ Vendors across all 12 categories
+    vendors_raw = [
+        # Catering
+        ("Royal Mewar Khansamas", "Thakur Ranveer Singh", "catering", "+91 98291 22001", "mewar.khansama@gmail.com", "Udaipur", 4.9, 98.0, 1.2),
+        ("Oberoi Grand Palace Catering", "Chef Sanjeev Anand", "catering", "+91 98291 22002", "oberoi.catering@gmail.com", "Udaipur", 4.8, 97.0, 0.5),
+        ("Marwari Heritage Banquets", "Gordhan Das Agarwal", "catering", "+91 98291 22003", "marwari.banquets@gmail.com", "Jaipur", 4.7, 95.0, 2.0),
+        ("Shreeji Gourmet Live Pavilions", "Nitin Parekh", "catering", "+91 98291 22004", "shreeji.gourmet@gmail.com", "Jaipur", 4.9, 99.0, 0.8),
+        # Decoration
+        ("Shekhawati Palace Scenography", "Aditya Rathore", "decor", "+91 98291 22005", "shekhawati.decor@gmail.com", "Jaipur", 4.9, 96.0, 3.1),
+        ("Udaivilas Floral & Mandap Atelier", "Kavita Chawla", "decor", "+91 98291 22006", "udaivilas.floral@gmail.com", "Udaipur", 4.8, 95.0, 2.5),
+        ("Jodhpur Royal Shamiana Works", "Bhairon Singh", "decor", "+91 98291 22007", "jodhpur.shamiana@gmail.com", "Jodhpur", 4.7, 94.0, 4.0),
+        # Photography
+        ("Stories by Joseph Radhik", "Joseph Radhik Studio", "photography", "+91 98291 22008", "radhik.studio@gmail.com", "Jaipur", 5.0, 99.0, 0.0),
+        ("WeddingNama Heritage", "Ankita Asthana", "photography", "+91 98291 22009", "weddingnama@gmail.com", "Udaipur", 4.9, 98.0, 0.5),
+        ("House on the Clouds", "Siddharth Sharma", "photography", "+91 98291 22010", "clouds.photo@gmail.com", "Jaipur", 4.8, 97.0, 1.0),
+        # Videography
+        ("The Wedding Filmer", "Vishal Punjabi Studio", "videography", "+91 98291 22011", "twf.cinematics@gmail.com", "Jaipur", 5.0, 99.0, 0.0),
+        ("Royal Reel Productions", "Devendra Joshi", "videography", "+91 98291 22012", "royalreel@gmail.com", "Udaipur", 4.7, 94.0, 1.8),
+        # Makeup Artists
+        ("Ojas Rajani Bridal Couture", "Ojas Rajani", "makeup", "+91 98291 22013", "ojas.bridal@gmail.com", "Jaipur", 4.9, 96.0, 0.0),
+        ("Daniel Bauer Bridal Atelier", "Daniel Bauer", "makeup", "+91 98291 22014", "bauer.atelier@gmail.com", "Udaipur", 4.8, 95.0, 0.0),
+        # DJs and Music
+        ("DJ Aqeel Private Soundscape", "Aqeel Ali", "djs_music", "+91 98291 22015", "aqeel.weddings@gmail.com", "Jaipur", 4.9, 98.0, 1.0),
+        ("Percussionist Jonqui & Band", "Jonqui Sound", "djs_music", "+91 98291 22016", "jonqui.band@gmail.com", "Udaipur", 4.8, 96.0, 2.0),
+        # Entertainment
+        ("Manganiyar Royal Folk Troupe", "Ustad Anwar Khan", "entertainment", "+91 98291 22017", "manganiyar.troupe@gmail.com", "Jodhpur", 5.0, 100.0, 0.0),
+        ("Nizami Bandhu Sufi Ensemble", "Chand Nizami", "entertainment", "+91 98291 22018", "nizami.sufi@gmail.com", "Jaipur", 4.9, 97.0, 0.5),
+        # Florists
+        ("Dutch Flora Exotics", "Marco Van Der Berg", "florists", "+91 98291 22019", "dutch.flora@gmail.com", "Jaipur", 4.8, 95.0, 3.5),
+        ("Jaipur Rose & Tuberose Guild", "Rameshwar Saini", "florists", "+91 98291 22020", "jaipur.rose@gmail.com", "Jaipur", 4.7, 93.0, 2.8),
+        # Transportation
+        ("Rajputana Vintage Wheels", "Bhanwar Singh Bhati", "transport", "+91 98291 22021", "vintage.wheels@gmail.com", "Jaipur", 4.9, 98.0, 1.0),
+        ("Udaipur Lake Pichola Shikaras", "Ratan Lal Manjhi", "transport", "+91 98291 22022", "lake.shikaras@gmail.com", "Udaipur", 4.9, 99.0, 0.0),
+        # Venue
+        ("Rambagh Palace Estates", "General Manager Desk", "venue", "+91 98291 22023", "rambagh.events@ihcltata.com", "Jaipur", 5.0, 99.0, 0.0),
+        ("Jagmandir Island Palace Administration", "HRH Group Desk", "venue", "+91 98291 22024", "jagmandir.events@hrhhotels.com", "Udaipur", 5.0, 99.0, 0.0),
+        # Lighting
+        ("Architectural Palace Illuminations", "Suhas Kulkarni", "lighting", "+91 98291 22025", "palace.lighting@gmail.com", "Jaipur", 4.8, 96.0, 2.0),
+        ("Skyfire Royal Pyrotechnics", "Mahesh Chandra", "lighting", "+91 98291 22026", "skyfire.pyro@gmail.com", "Udaipur", 4.7, 95.0, 1.5),
+        # Other Services
+        ("Royal Turban & Safa Maestros", "Keshav Singh Rathore", "other", "+91 98291 22027", "royal.safa@gmail.com", "Jaipur", 4.9, 99.0, 0.0)
+    ]
+
+    vendors_map = {}
+    for b_name, cp, c_code, ph, em, city, rat, ont, var in vendors_raw:
+        v = db.query(Vendor).filter(Vendor.business_name == b_name).first()
+        if not v:
+            v = Vendor(
+                business_name=b_name,
+                contact_person=cp,
+                category_id=categories_map[c_code].id,
+                phone=ph,
+                email=em,
+                city=city,
+                rating=rat,
+                on_time_percentage=ont,
+                bill_variance_percentage=var,
+                gst_number=f"08AABC{hash(b_name)%90000 + 10000}Z1",
+                is_active=True
+            )
+            db.add(v)
+            db.commit()
+            db.refresh(v)
+        vendors_map[b_name] = v
+
+    # 5. Seed Enquiries
     now = datetime.utcnow()
-    enquiries_data = [
+    TaskEngineService.ensure_default_templates(db)
+
+    # 6. Seed 5 Weddings in Different Stages
+    weddings_seed_data = [
+        # Wedding 1: Active with Catering RFQ Ready to Compare
         {
-            "enquiry_number": "RK-ENQ-2026-0001",
-            "bride_name": "Ananya Singhania",
-            "groom_name": "Rohan Mehra",
-            "email": "ananya.singhania@gmail.com",
-            "phone": "+91 98111 22334",
-            "preferred_date": now + timedelta(days=90),
-            "destination": "Udaipur",
-            "venue_preference": "Taj Lake Palace & Jagmandir Island",
-            "guest_count": 450,
-            "function_count": 4,
-            "functions_requested": ["Mehendi", "Sangeet", "Wedding", "Royal Reception"],
-            "theme_preference": "Mughal & Rajputana Royal Opulence",
-            "budget_max": 25000000.00, # 2.5 Crore INR
-            "package_type": "full_service",
-            "catering_preferences": "Royal Rajasthani Thali, Pan-Asian live counters, Michelin curated dessert bar",
-            "decor_preferences": "Thousands of marigolds, antique brass lanterns, mirror work Mandap on water",
-            "additional_notes": "Couple requests helicopter entry for the Baraat and private boat transfers.",
-            "source": "Website",
-            "status": "New",
-            "assigned_planner_id": planner_id,
-            "last_activity_at": now - timedelta(hours=2)
-        },
-        {
-            "enquiry_number": "RK-ENQ-2026-0002",
-            "bride_name": "Priyanka Jhunjhunwala",
-            "groom_name": "Aman Goenka",
-            "email": "priyanka.j@outlook.com",
-            "phone": "+91 98200 44556",
-            "preferred_date": now + timedelta(days=120),
-            "destination": "Jaipur",
-            "venue_preference": "Rambagh Palace & Jaigarh Fort",
-            "guest_count": 550,
-            "function_count": 5,
-            "functions_requested": ["Haldi", "Mehendi", "Sangeet", "Wedding", "Reception"],
-            "theme_preference": "Heritage Pink City & Regal Gold",
-            "budget_max": 35000000.00, # 3.5 Crore INR
-            "package_type": "full_service",
-            "catering_preferences": "Authentic Marwari feast with modern progressive Indian fusion",
-            "decor_preferences": "Tuberose chandeliers, royal shamianas, hand-carved floral jali screens",
-            "additional_notes": "VIP delegates from London and Dubai attending; private airport chartered convoys needed.",
-            "source": "Instagram",
-            "status": "Contacted",
-            "assigned_planner_id": planner_id,
-            "last_activity_at": now - timedelta(days=1)
-        },
-        {
-            "enquiry_number": "RK-ENQ-2026-0003",
-            "bride_name": "Divya Chordia",
-            "groom_name": "Karan Mittal",
-            "email": "divya.chordia@mittalcorp.com",
-            "phone": "+91 97170 88990",
-            "preferred_date": now + timedelta(days=60),
-            "destination": "Udaipur",
-            "venue_preference": "The Leela Palace Udaipur",
-            "guest_count": 350,
-            "function_count": 3,
-            "functions_requested": ["Sangeet", "Wedding", "Reception"],
-            "theme_preference": "Lakeside Romance & Candlelit Courtyards",
-            "budget_max": 18000000.00, # 1.8 Crore INR
-            "package_type": "full_service",
-            "catering_preferences": "Pure vegetarian Jain gourmet and European Mediterranean live stations",
-            "decor_preferences": "Glasshouse Sangeet, thousands of floating candles on Pichola lake",
-            "additional_notes": "Awaiting final date lock with the family pandit.",
-            "source": "Referral",
-            "status": "Consultation Scheduled",
-            "assigned_planner_id": planner_id,
-            "last_activity_at": now - timedelta(days=2),
-            "follow_up_date": now + timedelta(days=1)
-        },
-        {
-            "enquiry_number": "RK-ENQ-2026-0004",
-            "bride_name": "Isha Ambawat",
-            "groom_name": "Sameer Kothari",
-            "email": "isha.ambawat@gmail.com",
-            "phone": "+91 99300 77112",
-            "preferred_date": now + timedelta(days=150),
-            "destination": "Jaipur",
-            "venue_preference": "Samode Palace",
-            "guest_count": 300,
-            "function_count": 4,
-            "functions_requested": ["Haldi", "Mehendi", "Sangeet", "Wedding"],
-            "theme_preference": "Boho Royal & Sufi Mystique",
-            "budget_max": 15000000.00,
-            "package_type": "partial_day_of",
-            "catering_preferences": "Traditional Rajasthani & Continental buffet",
-            "decor_preferences": "Hand-painted frescoes inspiration with pampa grass and marigold installations",
-            "additional_notes": "Client requested proposal with Day-of coordination breakdown.",
-            "source": "WhatsApp",
-            "status": "Proposal Sent",
-            "assigned_planner_id": planner_id,
-            "last_activity_at": now - timedelta(days=4) # Inactive 3+ days!
-        },
-        {
-            "enquiry_number": "RK-ENQ-2026-0005",
-            "bride_name": "Radhika Biyani",
-            "groom_name": "Abhishek Dalmia",
-            "email": "radhika.b@dalmiagroup.in",
-            "phone": "+91 98210 66554",
-            "preferred_date": now + timedelta(days=180),
-            "destination": "Jaipur",
-            "venue_preference": "Fairmont Jaipur",
-            "guest_count": 600,
-            "function_count": 5,
-            "functions_requested": ["Haldi", "Mehendi", "Sangeet", "Wedding", "Grand Gala"],
-            "theme_preference": "Grand Imperial Durbar",
-            "budget_max": 40000000.00, # 4 Crore INR
-            "package_type": "full_service",
-            "catering_preferences": "Full gourmet multi-cuisine feast by royal Khansamas",
-            "decor_preferences": "Extravagant grand entrance with royal trumpeters and gold zardozi canopies",
-            "additional_notes": "Negotiating artist rider charges and final payment milestone schedule.",
-            "source": "Call",
-            "status": "Negotiation",
-            "assigned_planner_id": planner_id,
-            "last_activity_at": now - timedelta(hours=18)
-        },
-        {
-            "enquiry_number": "RK-ENQ-2026-0006",
+            "wedding_number": "RK-WED-2026-001",
+            "couple_title": "Aditi & Kabir",
             "bride_name": "Aditi Roy Kapoor",
             "groom_name": "Kabir Mathur",
-            "email": "aditi.rk@kapoorstudios.com",
-            "phone": "+91 98200 99887",
-            "preferred_date": now + timedelta(days=45),
+            "contact_email": "kabir.mathur@kapoorstudios.com",
+            "contact_phone": "+91 98200 99887",
+            "wedding_date_start": now + timedelta(days=45),
+            "wedding_date_end": now + timedelta(days=47),
             "destination": "Udaipur",
-            "venue_preference": "Fateh Garh & Jagmandir Palace",
-            "guest_count": 420,
-            "function_count": 4,
-            "functions_requested": ["Haldi & Pool Party", "Sangeet Under The Stars", "Vedic Pheras", "Royal Reception"],
-            "theme_preference": "Classic Ivory, Rose Gold & Velvet Emerald",
-            "budget_max": 28000000.00,
+            "venue_name": "Fateh Garh & Jagmandir Island Palace",
+            "expected_guest_count": 420,
             "package_type": "full_service",
-            "catering_preferences": "Luxury Rajasthani & Italian live pasta wheel",
-            "decor_preferences": "50,000 Dutch roses Mandap overlooking lake Pichola",
-            "additional_notes": "Agreement signed and booking deposit received! Converted to confirmed wedding.",
-            "source": "Website",
-            "status": "Confirmed",
-            "assigned_planner_id": planner_id,
-            "last_activity_at": now - timedelta(hours=5)
+            "agreed_budget": 28000000.00,
+            "status": "Active"
         },
+        # Wedding 2: Completed, highly profitable
         {
-            "enquiry_number": "RK-ENQ-2026-0007",
-            "bride_name": "Meera Doshi",
-            "groom_name": "Varun Agarwal",
-            "email": "meera.doshi@gmail.com",
-            "phone": "+91 99200 11223",
-            "preferred_date": now + timedelta(days=210),
-            "destination": "Jodhpur",
-            "venue_preference": "Umaid Bhawan Palace",
-            "guest_count": 400,
-            "function_count": 4,
-            "functions_requested": ["Mehendi", "Sangeet", "Wedding", "Reception"],
-            "theme_preference": "Art Deco Royal Heritage",
-            "budget_max": 30000000.00,
-            "package_type": "full_service",
-            "source": "Website",
-            "status": "New",
-            "assigned_planner_id": None,
-            "last_activity_at": now - timedelta(days=5) # Inactive 3+ days!
-        },
-        {
-            "enquiry_number": "RK-ENQ-2026-0008",
-            "bride_name": "Simran Sawhney",
-            "groom_name": "Devansh Batra",
-            "email": "simran.sawhney@gmail.com",
-            "phone": "+91 98110 33445",
-            "preferred_date": now + timedelta(days=300),
+            "wedding_number": "RK-WED-2026-002",
+            "couple_title": "Devika & Yuvraj",
+            "bride_name": "Devika Shekhawat",
+            "groom_name": "Yuvraj Singh Ranawat",
+            "contact_email": "devika.yuvraj@gmail.com",
+            "contact_phone": "+91 98290 44332",
+            "wedding_date_start": now - timedelta(days=30),
+            "wedding_date_end": now - timedelta(days=28),
             "destination": "Jaipur",
-            "venue_preference": "Jai Mahal Palace",
-            "guest_count": 250,
-            "function_count": 3,
-            "functions_requested": ["Mehendi", "Sangeet", "Wedding"],
-            "theme_preference": "Mughal Garden Romance",
-            "budget_max": 12000000.00,
+            "venue_name": "Rambagh Palace & Jaigarh",
+            "expected_guest_count": 500,
             "package_type": "full_service",
-            "source": "Referral",
-            "status": "Lost",
-            "assigned_planner_id": planner_id,
-            "additional_notes": "Client postponed wedding to next year due to family scheduling.",
-            "last_activity_at": now - timedelta(days=10)
+            "agreed_budget": 35000000.00,
+            "status": "Completed"
+        },
+        # Wedding 3: Completed, loss-making (unexpected overruns)
+        {
+            "wedding_number": "RK-WED-2026-003",
+            "couple_title": "Sunaina & Harsh",
+            "bride_name": "Sunaina Singhi",
+            "groom_name": "Harsh Poddar",
+            "contact_email": "sunaina.singhi@gmail.com",
+            "contact_phone": "+91 98201 11223",
+            "wedding_date_start": now - timedelta(days=15),
+            "wedding_date_end": now - timedelta(days=13),
+            "destination": "Jaipur",
+            "venue_name": "Fairmont Jaipur",
+            "expected_guest_count": 400,
+            "package_type": "full_service",
+            "agreed_budget": 20000000.00,
+            "status": "Completed"
+        },
+        # Wedding 4: Planning
+        {
+            "wedding_number": "RK-WED-2026-004",
+            "couple_title": "Meenakshi & Jaideep",
+            "bride_name": "Meenakshi Somani",
+            "groom_name": "Jaideep Bangur",
+            "contact_email": "meenakshi.somani@gmail.com",
+            "contact_phone": "+91 98290 55667",
+            "wedding_date_start": now + timedelta(days=90),
+            "wedding_date_end": now + timedelta(days=92),
+            "destination": "Jaipur",
+            "venue_name": "Samode Palace",
+            "expected_guest_count": 350,
+            "package_type": "full_service",
+            "agreed_budget": 22000000.00,
+            "status": "Planning"
+        },
+        # Wedding 5: In Progress
+        {
+            "wedding_number": "RK-WED-2026-005",
+            "couple_title": "Kavya & Prateek",
+            "bride_name": "Kavya Agarwal",
+            "groom_name": "Prateek Maheshwari",
+            "contact_email": "kavya.prateek@gmail.com",
+            "contact_phone": "+91 98290 77889",
+            "wedding_date_start": now + timedelta(days=5),
+            "wedding_date_end": now + timedelta(days=7),
+            "destination": "Jodhpur",
+            "venue_name": "Umaid Bhawan Palace",
+            "expected_guest_count": 450,
+            "package_type": "full_service",
+            "agreed_budget": 32000000.00,
+            "status": "In Progress"
         }
     ]
 
-    for ed in enquiries_data:
-        enq = db.query(Enquiry).filter(Enquiry.enquiry_number == ed["enquiry_number"]).first()
-        if not enq:
-            enq = Enquiry(**ed)
-            db.add(enq)
-            db.commit()
-            db.refresh(enq)
-            
-            # Add initial notes to enquiries
-            note = EnquiryNote(
-                enquiry_id=enq.id,
-                author_id=planner_id,
-                content=f"Initial requirement intake completed. Client priority: {enq.theme_preference}."
+    weddings_map = {}
+    for wd in weddings_seed_data:
+        w = db.query(Wedding).filter(Wedding.wedding_number == wd["wedding_number"]).first()
+        if not w:
+            w = Wedding(
+                wedding_number=wd["wedding_number"],
+                couple_title=wd["couple_title"],
+                bride_name=wd["bride_name"],
+                groom_name=wd["groom_name"],
+                primary_contact_name=wd["groom_name"],
+                contact_email=wd["contact_email"],
+                contact_phone=wd["contact_phone"],
+                wedding_date_start=wd["wedding_date_start"],
+                wedding_date_end=wd["wedding_date_end"],
+                destination=wd["destination"],
+                venue_name=wd["venue_name"],
+                expected_guest_count=wd["expected_guest_count"],
+                package_type=wd["package_type"],
+                agreed_budget=wd["agreed_budget"],
+                assigned_planner_id=planner_id,
+                status=wd["status"]
             )
-            db.add(note)
-            
-            if enq.status == "Consultation Scheduled":
-                consultation = Consultation(
-                    enquiry_id=enq.id,
-                    scheduled_at=now + timedelta(days=1, hours=4),
-                    meeting_type="Zoom Video Consultation",
-                    notes="Review palace layout options and caterer shortlists.",
-                    status="Scheduled"
-                )
-                db.add(consultation)
+            db.add(w)
+            db.commit()
+            db.refresh(w)
+        # Always ensure instant plan tasks are generated
+        TaskEngineService.generate_instant_plan(db, w.id, planner_id)
+        weddings_map[wd["wedding_number"]] = w
 
-    db.commit()
+    w1 = weddings_map["RK-WED-2026-001"] # Aditi & Kabir
+    w2 = weddings_map["RK-WED-2026-002"] # Devika & Yuvraj (Completed, Profit)
+    w3 = weddings_map["RK-WED-2026-003"] # Sunaina & Harsh (Completed, Loss)
 
-    # 5. Seed Confirmed Wedding Workspace for Aditi & Kabir
-    confirmed_enquiry = db.query(Enquiry).filter(Enquiry.enquiry_number == "RK-ENQ-2026-0006").first()
-    if confirmed_enquiry and not db.query(Wedding).filter(Wedding.wedding_number == "RK-WED-2026-001").first():
-        wedding = Wedding(
-            wedding_number="RK-WED-2026-001",
-            enquiry_id=confirmed_enquiry.id,
-            couple_title="Aditi & Kabir",
-            bride_name="Aditi Roy Kapoor",
-            groom_name="Kabir Mathur",
-            primary_contact_name="Kabir Mathur",
-            contact_phone="+91 98200 99887",
-            contact_email="kabir.mathur@kapoorstudios.com",
-            wedding_date_start=now + timedelta(days=45),
-            wedding_date_end=now + timedelta(days=47),
-            destination="Udaipur",
-            venue_name="Fateh Garh & Jagmandir Island Palace",
-            expected_guest_count=420,
+    # 7. Seed Contract with Signed Status for Aditi & Kabir
+    cnt1 = db.query(Contract).filter(Contract.wedding_id == w1.id).first()
+    if not cnt1:
+        cnt1 = Contract(
+            enquiry_id="seed-enquiry-aditi",
+            wedding_id=w1.id,
+            contract_number="RK-CNT-2026-0001",
             package_type="full_service",
-            agreed_budget=28000000.00,
-            assigned_planner_id=planner_id,
-            status="Active"
+            total_amount=28000000.00,
+            terms_content="The Royal Knot Luxury Wedding Management Agreement for Aditi & Kabir.",
+            status="Signed",
+            signed_at=now - timedelta(days=20),
+            signed_by_name="Kabir Mathur",
+            signer_ip="182.72.14.92",
+            pdf_url="/uploads/Contract_RK-CNT-2026-0001.pdf"
         )
-        db.add(wedding)
-        db.commit()
-        db.refresh(wedding)
-
-        # Seed Wedding Events
-        events = [
-            ("Haldi & Carnival", "Poolside Courtyard, Fateh Garh", wedding.wedding_date_start, "10:30 AM", "02:30 PM", "Yellow Festive"),
-            ("Royal Sangeet & Soundscape", "Main Palace Lawn, Fateh Garh", wedding.wedding_date_start, "07:30 PM", "01:30 AM", "Indo-Western Glitz"),
-            ("Vedic Wedding Ceremony", "Lake Courtyard, Jagmandir Island", wedding.wedding_date_start + timedelta(days=1), "04:30 PM", "09:30 PM", "Royal Heritage"),
-            ("The Imperial Reception", "Grand Ballroom, Jagmandir Palace", wedding.wedding_date_start + timedelta(days=1), "09:30 PM", "02:00 AM", "Black Tie & Velvet")
-        ]
-        for title, venue, dt, st, et, dc in events:
-            db.add(WeddingEvent(
-                wedding_id=wedding.id,
-                title=title,
-                venue=venue,
-                event_date=dt,
-                start_time=st,
-                end_time=et,
-                dress_code=dc
-            ))
+        db.add(cnt1)
         db.commit()
 
-        # Seed Client Milestones & Payments
-        m1 = ClientPaymentMilestone(
-            wedding_id=wedding.id,
-            milestone_name="Booking Deposit (25%)",
-            percentage=25.0,
-            expected_amount=7000000.00,
-            due_date=now - timedelta(days=10),
-            status="Paid"
+    # 8. Seed Catering Quotation Request (RFQ) with THREE Caterers for Aditi & Kabir
+    rfq = db.query(QuotationRequest).filter(QuotationRequest.wedding_id == w1.id).first()
+    if not rfq:
+        rfq = QuotationRequest(
+            wedding_id=w1.id,
+            category_id=categories_map["catering"].id,
+            title="Royal Banqueting & Khansama Gastronomy (420 Guests)",
+            specifications="Curate 4 function feasts: Poolside Haldi brunch, Sangeet live counters, Vedic Vivah royal thali, and European Imperial Reception dinner.",
+            status="Open"
         )
-        m2 = ClientPaymentMilestone(
-            wedding_id=wedding.id,
-            milestone_name="Advance Payment (50%)",
-            percentage=50.0,
-            expected_amount=14000000.00,
-            due_date=now + timedelta(days=15),
-            status="Pending"
+        db.add(rfq)
+        db.commit()
+        db.refresh(rfq)
+
+        # Quote 1: Royal Mewar Khansamas (Competitive & High Quality)
+        v1 = vendors_map["Royal Mewar Khansamas"]
+        q1 = VendorQuotation(
+            quotation_request_id=rfq.id,
+            vendor_id=v1.id,
+            total_amount=1890000.00, # 4500 x 420
+            price_per_plate=4500.00,
+            extra_hour_rate=25000.00,
+            taxes=94500.00,
+            inclusions="4-Course Royal Mewari Thali\nLive Pan-Asian Wok Station\nHeritage Dessert Tasting Bar\nSilver Cutlery & Royal Service Staff",
+            exclusions="Imported Caviar Bar\nExotic French Truffle Station",
+            notes="Ready to mobilize 60 khansamas and master royal thali brass platters.",
+            status="Submitted"
         )
-        m3 = ClientPaymentMilestone(
-            wedding_id=wedding.id,
-            milestone_name="Final Settlement (25%)",
-            percentage=25.0,
-            expected_amount=7000000.00,
-            due_date=now + timedelta(days=50),
-            status="Pending"
+        db.add(q1)
+        db.commit()
+        db.refresh(q1)
+        db.add_all([
+            QuotationLineItem(vendor_quotation_id=q1.id, item_name="Mewari Royal Thali Experience", quantity=420, unit_rate=2800.00, total_price=1176000.00, is_inclusion=True),
+            QuotationLineItem(vendor_quotation_id=q1.id, item_name="Pan-Asian Live Pavilion", quantity=420, unit_rate=1200.00, total_price=504000.00, is_inclusion=True),
+            QuotationLineItem(vendor_quotation_id=q1.id, item_name="Dessert & Mithai Bar", quantity=420, unit_rate=500.00, total_price=210000.00, is_inclusion=True)
+        ])
+
+        # Quote 2: Oberoi Grand Palace Catering (Premium, Full Inclusions, Higher Price)
+        v2 = vendors_map["Oberoi Grand Palace Catering"]
+        q2 = VendorQuotation(
+            quotation_request_id=rfq.id,
+            vendor_id=v2.id,
+            total_amount=2184000.00, # 5200 x 420
+            price_per_plate=5200.00,
+            extra_hour_rate=35000.00,
+            taxes=109200.00,
+            inclusions="4-Course Royal Mewari Thali\nLive Pan-Asian Wok Station\nHeritage Dessert Tasting Bar\nImported Caviar Bar\nSilver Cutlery & Royal Service Staff",
+            exclusions="None. Complete turnkey banquet.",
+            notes="Oberoi executive master chef on-site throughout celebration.",
+            status="Submitted"
         )
-        db.add_all([m1, m2, m3])
+        db.add(q2)
+        db.commit()
+        db.refresh(q2)
+        db.add_all([
+            QuotationLineItem(vendor_quotation_id=q2.id, item_name="Grand Palace 5-Star Menu", quantity=420, unit_rate=3500.00, total_price=1470000.00, is_inclusion=True),
+            QuotationLineItem(vendor_quotation_id=q2.id, item_name="Caviar & Continental Station", quantity=420, unit_rate=1200.00, total_price=504000.00, is_inclusion=True),
+            QuotationLineItem(vendor_quotation_id=q2.id, item_name="Artisanal Patisserie", quantity=420, unit_rate=500.00, total_price=210000.00, is_inclusion=True)
+        ])
+
+        # Quote 3: Marwari Heritage Banquets (Lowest Price, Several Exclusions)
+        v3 = vendors_map["Marwari Heritage Banquets"]
+        q3 = VendorQuotation(
+            quotation_request_id=rfq.id,
+            vendor_id=v3.id,
+            total_amount=1764000.00, # 4200 x 420
+            price_per_plate=4200.00,
+            extra_hour_rate=20000.00,
+            taxes=88200.00,
+            inclusions="4-Course Royal Mewari Thali\nHeritage Dessert Tasting Bar",
+            exclusions="Live Pan-Asian Wok Station\nImported Caviar Bar\nLate-Night Snack Stalls",
+            notes="Traditional pure vegetarian Marwari cuisine only.",
+            status="Submitted"
+        )
+        db.add(q3)
+        db.commit()
+        db.refresh(q3)
+        db.add_all([
+            QuotationLineItem(vendor_quotation_id=q3.id, item_name="Authentic Marwari Feast", quantity=420, unit_rate=3500.00, total_price=1470000.00, is_inclusion=True),
+            QuotationLineItem(vendor_quotation_id=q3.id, item_name="Halwai Fresh Sweet Counter", quantity=420, unit_rate=700.00, total_price=294000.00, is_inclusion=True)
+        ])
         db.commit()
 
-        # Record received deposit
+    # 9. Seed Financials for Completed Wedding 2 (Devika & Yuvraj - High Profit)
+    if db.query(ClientPayment).filter(ClientPayment.wedding_id == w2.id).count() == 0:
         db.add(ClientPayment(
-            wedding_id=wedding.id,
-            milestone_id=m1.id,
-            amount=7000000.00,
-            payment_date=now - timedelta(days=9),
-            payment_method="NEFT / RTGS Transfer",
-            transaction_reference="HDFC-RTGS-RK-20261019-9831",
-            notes="Initial 25% booking deposit confirmed by finance."
+            wedding_id=w2.id,
+            amount=35000000.00,
+            payment_date=now - timedelta(days=25),
+            payment_method="RTGS Transfer",
+            transaction_reference="HDFC-RTGS-WED002-FINAL",
+            notes="Full contracted amount settled."
         ))
+        # Vendor payments: total ~21000000
+        inv1 = VendorInvoice(wedding_id=w2.id, vendor_id=vendors_map["Shekhawati Palace Scenography"].id, invoice_number="INV-SHEKH-01", invoice_date=now - timedelta(days=27), claimed_amount=9500000.00, agreed_baseline_amount=9500000.00, status="Paid")
+        inv2 = VendorInvoice(wedding_id=w2.id, vendor_id=vendors_map["Shreeji Gourmet Live Pavilions"].id, invoice_number="INV-SHREEJI-01", invoice_date=now - timedelta(days=27), claimed_amount=8000000.00, agreed_baseline_amount=8000000.00, status="Paid")
+        db.add_all([inv1, inv2])
+        db.commit()
+        db.add_all([
+            VendorPayment(wedding_id=w2.id, vendor_invoice_id=inv1.id, vendor_id=inv1.vendor_id, amount=9500000.00, transaction_reference="VPAY-002-1"),
+            VendorPayment(wedding_id=w2.id, vendor_invoice_id=inv2.id, vendor_id=inv2.vendor_id, amount=8000000.00, transaction_reference="VPAY-002-2"),
+            Expense(wedding_id=w2.id, category="Permissions & Logistics", amount=1200000.00, date=now - timedelta(days=28)),
+            TimeEntry(wedding_id=w2.id, user_id=planner_id, hours=120, hourly_rate=2000.00, notes="Master coordination")
+        ])
         db.commit()
 
-        # Log Activity
-        db.add(ActivityLog(
-            user_id=planner_id,
-            wedding_id=wedding.id,
-            action="WEDDING_CREATED",
-            details={"wedding_number": wedding.wedding_number, "couple": wedding.couple_title}
+    # 10. Seed Financials for Completed Wedding 3 (Sunaina & Harsh - Loss Making)
+    # Revenue: 20,000,000, but expenses exceeded: 23,500,000 (Loss: -3,500,000)
+    if db.query(ClientPayment).filter(ClientPayment.wedding_id == w3.id).count() == 0:
+        db.add(ClientPayment(
+            wedding_id=w3.id,
+            amount=20000000.00,
+            payment_date=now - timedelta(days=12),
+            payment_method="RTGS Transfer",
+            transaction_reference="ICICI-RTGS-WED003-FINAL",
+            notes="Contracted budget received."
         ))
+        inv3 = VendorInvoice(wedding_id=w3.id, vendor_id=vendors_map["Shekhawati Palace Scenography"].id, invoice_number="INV-SHEKH-LOSS", invoice_date=now - timedelta(days=14), claimed_amount=12000000.00, agreed_baseline_amount=9000000.00, variance_amount=3000000.00, variance_status="Flagged", status="Paid")
+        inv4 = VendorInvoice(wedding_id=w3.id, vendor_id=vendors_map["Marwari Heritage Banquets"].id, invoice_number="INV-MARWARI-LOSS", invoice_date=now - timedelta(days=14), claimed_amount=7500000.00, agreed_baseline_amount=6000000.00, variance_amount=1500000.00, variance_status="Flagged", status="Paid")
+        db.add_all([inv3, inv4])
+        db.commit()
+        db.add_all([
+            VendorPayment(wedding_id=w3.id, vendor_invoice_id=inv3.id, vendor_id=inv3.vendor_id, amount=12000000.00, transaction_reference="VPAY-003-1"),
+            VendorPayment(wedding_id=w3.id, vendor_invoice_id=inv4.id, vendor_id=inv4.vendor_id, amount=7500000.00, transaction_reference="VPAY-003-2"),
+            Expense(wedding_id=w3.id, category="Emergency Generators & Rain Shamianas", amount=3500000.00, date=now - timedelta(days=14), notes="Storm required full emergency glass structures"),
+            TimeEntry(wedding_id=w3.id, user_id=planner_id, hours=150, hourly_rate=2000.00, notes="Emergency mitigation staff hours"),
+            TimeEntry(wedding_id=w3.id, user_id=staff_id, hours=200, hourly_rate=1000.00, notes="24-hour storm response shifts")
+        ])
         db.commit()
 
-    print("The Royal Knot database seeded successfully!")
+    print("Phase 2 seed data completed successfully!")
     db.close()
 
 if __name__ == "__main__":

@@ -6,6 +6,11 @@ venv/
 .env
 *.db
 *.sqlite3
+.pytest_cache/
+
+# Uploads
+backend/uploads/*
+!backend/uploads/.gitkeep
 
 # Node / Frontend
 node_modules/

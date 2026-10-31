@@ -55,6 +55,8 @@ class QuotationRequest(Base):
     status = Column(String(50), default="Open") # Open, Closed, Awarded
     created_at = Column(DateTime, default=datetime.utcnow)
 
+    wedding = relationship("Wedding")
+    category = relationship("VendorCategory")
     quotations = relationship("VendorQuotation", back_populates="request", cascade="all, delete-orphan")
 
 class VendorQuotation(Base):
