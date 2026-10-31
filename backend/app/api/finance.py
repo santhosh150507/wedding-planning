@@ -1,7 +1,7 @@
 from typing import Optional, List, Dict, Any
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy.orm import Session
-from pydantic import BaseModel
+from pydantic import BaseModel, Field, field_validator
 
 from app.core.database import get_db
 from app.models.user import User
@@ -11,11 +11,18 @@ from app.api.deps import get_current_user
 router = APIRouter(prefix="/weddings/{wedding_id}/finance", tags=["Financial Accounting & Reconciliation"])
 
 class ClientPaymentRecordRequest(BaseModel):
-    amount: float
+    amount: float = Field(..., gt=0, description="Payment amount must be greater than zero")
     milestone_id: Optional[str] = None
     payment_method: str = "Bank Transfer"
-    transaction_reference: str
+    transaction_reference: str = Field(..., min_length=1, description="Transaction reference cannot be empty")
     notes: Optional[str] = None
+
+    @field_validator("transaction_reference")
+    @classmethod
+    def validate_transaction_reference(cls, v: str) -> str:
+        if not v or not v.strip():
+            raise ValueError("Transaction reference cannot be empty or whitespace-only")
+        return v.strip()
 
 class VendorPaymentRecordRequest(BaseModel):
     vendor_invoice_id: str

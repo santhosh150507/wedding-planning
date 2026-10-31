@@ -195,6 +195,13 @@ class FinanceService:
         notes: Optional[str],
         user_id: str
     ) -> ClientPayment:
+        if amount <= 0:
+            raise ValueError("Payment amount must be greater than zero.")
+        if not transaction_reference or not transaction_reference.strip():
+            raise ValueError("Transaction reference cannot be empty or whitespace-only.")
+
+        transaction_reference = transaction_reference.strip()
+
         # Check duplicate transaction reference
         existing = db.query(ClientPayment).filter(
             ClientPayment.transaction_reference == transaction_reference
